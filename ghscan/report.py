@@ -1,5 +1,6 @@
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from .models import Report, Repo
 
@@ -13,11 +14,17 @@ class Stats:
     last_active: str
 
 
+NEVER = datetime.min.replace(tzinfo=timezone.utc)
+
 SORT_KEYS = {
     "stars": (lambda r: (r.stars, r.forks), True),
-    "updated": (lambda r: r.pushed_at, True),
+    "updated": (lambda r: r.pushed_at or NEVER, True),
     "name": (lambda r: r.name.lower(), False),
 }
+
+
+def fmt_date(dt: datetime | None) -> str:
+    return dt.date().isoformat() if dt else "-"
 
 
 def own_repos(report: Report) -> list[Repo]:
@@ -58,7 +65,7 @@ def top_languages(breakdown: list[tuple[str, float]], top: int = 3) -> list[tupl
 
 def last_active(report: Report) -> str:
     latest = max((r.pushed_at for r in report.repos if r.pushed_at), default=report.profile.updated_at)
-    return latest[:10] or "-"
+    return fmt_date(latest)
 
 
 def build_stats(report: Report) -> Stats:
@@ -127,7 +134,7 @@ def render_repos(report: Report, sort_by: str, limit: int) -> str:
             f"{r.stars:,}",
             f"{r.forks:,}",
             r.language or "-",
-            r.pushed_at[:10] or "-",
+            fmt_date(r.pushed_at),
         )
         for i, r in enumerate(repos, 1)
     ]
@@ -150,7 +157,7 @@ def render_compare(a: Report, b: Report) -> str:
         ("Total forks", f"{sa.total_forks:,}", f"{sb.total_forks:,}"),
         ("Most starred", top_repo_label(sa.most_starred), top_repo_label(sb.most_starred)),
         ("Top language", top_lang(sa), top_lang(sb)),
-        ("Joined", a.profile.created_at[:10] or "-", b.profile.created_at[:10] or "-"),
+        ("Joined", fmt_date(a.profile.created_at), fmt_date(b.profile.created_at)),
         ("Last active", sa.last_active, sb.last_active),
     ]
     return table(("", f"@{a.profile.login}", f"@{b.profile.login}"), rows)
@@ -185,7 +192,7 @@ def render_markdown(report: Report) -> str:
         lines += ["| Repo | Stars | Forks | Language | Updated | Description |", "|---|--:|--:|---|---|---|"]
         lines += [
             f"| [{r.name}]({r.url}){' (fork)' if r.is_fork else ''} | {r.stars:,} | {r.forks:,} "
-            f"| {r.language or '-'} | {r.pushed_at[:10] or '-'} | {md_escape(r.description or '')} |"
+            f"| {r.language or '-'} | {fmt_date(r.pushed_at)} | {md_escape(r.description or '')} |"
             for r in repos
         ]
     else:

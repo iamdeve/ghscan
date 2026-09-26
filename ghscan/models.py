@@ -1,72 +1,42 @@
-from dataclasses import asdict, dataclass, field
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-@dataclass
-class Profile:
+class Profile(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     login: str
-    name: str | None
-    location: str | None
-    followers: int
-    following: int
-    public_repos: int
-    created_at: str
-    updated_at: str
-    url: str
+    name: str | None = None
+    location: str | None = None
+    followers: int = Field(default=0, ge=0)
+    following: int = Field(default=0, ge=0)
+    public_repos: int = Field(default=0, ge=0)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    url: str = Field(default="", alias="html_url")
 
+
+class Repo(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, validate_assignment=True)
+
+    name: str = Field(min_length=1)
+    description: str | None = None
+    stars: int = Field(default=0, ge=0, alias="stargazers_count")
+    forks: int = Field(default=0, ge=0, alias="forks_count")
+    language: str | None = None
+    is_fork: bool = Field(default=False, alias="fork")
+    pushed_at: datetime | None = None
+    url: str = Field(default="", alias="html_url")
+    languages: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator("languages")
     @classmethod
-    def from_api(cls, data: dict) -> "Profile":
-        return cls(
-            login=data["login"],
-            name=data.get("name"),
-            location=data.get("location"),
-            followers=data.get("followers", 0),
-            following=data.get("following", 0),
-            public_repos=data.get("public_repos", 0),
-            created_at=data.get("created_at") or "",
-            updated_at=data.get("updated_at") or "",
-            url=data.get("html_url") or "",
-        )
+    def drop_empty_languages(cls, v: dict[str, int]) -> dict[str, int]:
+        return {lang: size for lang, size in v.items() if size > 0}
 
 
-@dataclass
-class Repo:
-    name: str
-    description: str | None
-    stars: int
-    forks: int
-    language: str | None
-    is_fork: bool
-    pushed_at: str
-    url: str
-    languages: dict[str, int] = field(default_factory=dict)
-
-    @classmethod
-    def from_api(cls, data: dict) -> "Repo":
-        return cls(
-            name=data["name"],
-            description=data.get("description"),
-            stars=data.get("stargazers_count", 0),
-            forks=data.get("forks_count", 0),
-            language=data.get("language"),
-            is_fork=data.get("fork", False),
-            pushed_at=data.get("pushed_at") or "",
-            url=data.get("html_url") or "",
-        )
-
-
-@dataclass
-class Report:
+class Report(BaseModel):
     profile: Profile
     repos: list[Repo]
     fetched_at: float
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "Report":
-        return cls(
-            profile=Profile(**data["profile"]),
-            repos=[Repo(**repo) for repo in data["repos"]],
-            fetched_at=data["fetched_at"],
-        )

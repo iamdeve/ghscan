@@ -1,4 +1,3 @@
-import json
 import os
 import time
 from pathlib import Path
@@ -18,7 +17,7 @@ def load(username: str) -> Report | None:
     if not path.exists():
         return None
     try:
-        report = Report.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        report = Report.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, KeyError, TypeError):
         return None
     if time.time() - report.fetched_at > MAX_AGE_SECONDS:
@@ -29,8 +28,6 @@ def load(username: str) -> Report | None:
 def save(report: Report) -> None:
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache_path(report.profile.login).write_text(
-            json.dumps(report.to_dict(), indent=2), encoding="utf-8"
-        )
+        cache_path(report.profile.login).write_text(report.model_dump_json(indent=2), encoding="utf-8")
     except OSError:
         pass

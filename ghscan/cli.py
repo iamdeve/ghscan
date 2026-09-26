@@ -1,6 +1,5 @@
 import argparse
 import asyncio
-import json
 import re
 import sys
 from pathlib import Path
@@ -61,7 +60,7 @@ async def cmd_export(args: argparse.Namespace) -> None:
     if args.format == "md":
         content = render_markdown(report)
     else:
-        content = json.dumps(report.to_dict(), indent=2)
+        content = report.model_dump_json(indent=2)
 
     path = Path(args.output or f"{report.profile.login}_report.{args.format}")
     try:

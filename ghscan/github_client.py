@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 
 import httpx
+from pydantic import BaseModel, ValidationError
 
 from .errors import GhscanError
 from .models import Profile, Repo, Report
@@ -70,11 +71,18 @@ async def get_json(
     return resp.json()
 
 
+def parse(model: type[BaseModel], data: dict):
+    try:
+        return model.model_validate(data)
+    except ValidationError as err:
+        raise GitHubError(f"Unexpected data from GitHub: {err.errors()[0]['msg']}") from None
+
+
 async def get_profile(client: httpx.AsyncClient, username: str) -> Profile:
     data = await get_json(client, f"/users/{username}")
     if data is None:
         raise UserNotFound(username)
-    return Profile.from_api(data)
+    return parse(Profile, data)
 
 
 async def get_repos(client: httpx.AsyncClient, username: str) -> list[Repo]:
@@ -85,7 +93,7 @@ async def get_repos(client: httpx.AsyncClient, username: str) -> list[Repo]:
         batch = await get_json(client, f"/users/{username}/repos", params)
         if batch is None:
             raise UserNotFound(username)
-        repos.extend(Repo.from_api(item) for item in batch)
+        repos.extend(parse(Repo, item) for item in batch)
         if len(batch) < PER_PAGE:
             break
         page += 1
