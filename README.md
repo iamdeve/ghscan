@@ -1,5 +1,9 @@
 # ghscan
 
+[![tests](https://github.com/iamdeve/ghscan/actions/workflows/tests.yml/badge.svg)](https://github.com/iamdeve/ghscan/actions/workflows/tests.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 A small command-line tool for looking up any GitHub user. It shows their top repos, language breakdown, total stars and recent activity, and it can compare two users side by side or export a Markdown report.
 
 Built with Python 3.10+, `asyncio` and `httpx`. Requests run in parallel, and results are cached for an hour, so a repeat lookup is instant.
