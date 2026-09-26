@@ -127,3 +127,9 @@ def test_fetch_report_skips_forks_and_limits_without_token(monkeypatch):
     assert {r.name: r.languages for r in report.repos} == {
         "big": {"Python": 100}, "mid": {"Python": 100}, "small": {}, "fork": {},
     }
+
+
+def test_malformed_github_data_is_clean_error():
+    handler = lambda request: httpx.Response(200, json={"name": "no login field"})
+    with pytest.raises(GitHubError, match="Unexpected data from GitHub"):
+        run(lambda c: get_profile(c, "octo"), handler)

@@ -7,7 +7,7 @@ def make_repo(name: str, stars: int = 0, **kwargs) -> Repo:
         forks=0,
         language=None,
         is_fork=False,
-        pushed_at="",
+        pushed_at=None,
         url=f"https://github.com/octo/{name}",
         languages={},
     )
