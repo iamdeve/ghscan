@@ -1,0 +1,2 @@
+class GhscanError(Exception):
+    pass
