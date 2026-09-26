@@ -4,6 +4,8 @@ A small command-line tool for looking up any GitHub user. It shows their top rep
 
 Built with Python 3.10+, `asyncio` and `httpx`. Requests run in parallel, and results are cached for an hour, so a repeat lookup is instant.
 
+![ghscan in the terminal](docs/screenshot.png)
+
 ## Install
 
 With pip, straight from GitHub:
