@@ -1,3 +1,4 @@
+import asyncio
 import time
 from contextlib import asynccontextmanager
 
@@ -22,6 +23,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = settings
         app.state.cache = ReportCache(settings.cache_ttl_seconds)
         app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
+        app.state.github_sem = asyncio.Semaphore(settings.max_concurrent_github)
         async with make_client(settings.github_token) as client:
             app.state.http = client
             yield

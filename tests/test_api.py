@@ -34,12 +34,21 @@ USERS = {
 }
 
 
+def generated_user(login: str) -> dict | None:
+    if not login.startswith("gen"):
+        return None
+    repos = [{"name": f"r{i}", "stargazers_count": 30 - i, "language": "Go"} for i in range(30)]
+    return {"profile": {"login": login}, "repos": repos, "languages": {f"r{i}": {"Go": 10} for i in range(30)}}
+
+
 class FakeGitHub:
     def __init__(self) -> None:
         self.calls: Counter[str] = Counter()
         self.status: int | None = None
         self.headers: dict[str, str] = {}
         self.delay = 0.0
+        self.active_language_calls = 0
+        self.peak_language_calls = 0
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -50,23 +59,34 @@ class FakeGitHub:
             return httpx.Response(self.status, headers=self.headers)
 
         parts = path.strip("/").split("/")
+        if path.endswith("/languages"):
+            return await self.languages(parts)
         if parts[0] == "users":
-            user = USERS.get(parts[1].lower())
+            user = USERS.get(parts[1].lower()) or generated_user(parts[1])
             if user is None:
                 return httpx.Response(404)
             if len(parts) == 2:
                 return httpx.Response(200, json=user["profile"])
             page = int(request.url.params.get("page", 1))
             return httpx.Response(200, json=user["repos"] if page == 1 else [])
-        owner, repo = parts[1].lower(), parts[2]
-        return httpx.Response(200, json=USERS[owner]["languages"].get(repo, {}))
+        return httpx.Response(404)
+
+    async def languages(self, parts: list[str]) -> httpx.Response:
+        self.active_language_calls += 1
+        self.peak_language_calls = max(self.peak_language_calls, self.active_language_calls)
+        try:
+            await asyncio.sleep(self.delay or 0.001)
+            user = USERS.get(parts[1].lower()) or generated_user(parts[1]) or {"languages": {}}
+            return httpx.Response(200, json=user["languages"].get(parts[2], {}))
+        finally:
+            self.active_language_calls -= 1
 
     def profile_calls(self, login: str) -> int:
         return self.calls[f"/users/{login}"]
 
 
 def build(**overrides) -> tuple:
-    settings = Settings(_env_file=None, github_token=None, **overrides)
+    settings = Settings(_env_file=None, **{"github_token": None, **overrides})
     app = create_app(settings)
     github = FakeGitHub()
 
@@ -341,3 +361,42 @@ def test_app_client_uses_configured_token():
     app = create_app(Settings(_env_file=None, github_token="secret"))
     with TestClient(app):
         assert app.state.http.headers["authorization"] == "Bearer secret"
+
+
+def test_one_semaphore_limits_github_calls_across_requests():
+    app, github = build(max_concurrent_github=3, github_token="t")
+    github.delay = 0.01
+
+    async def main():
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                return await asyncio.gather(*(client.get(f"/users/gen{i}") for i in range(6)))
+
+    responses = asyncio.run(main())
+    assert [r.status_code for r in responses] == [200] * 6
+    assert sum(github.calls[p] for p in github.calls if p.endswith("/languages")) == 6 * 30
+    assert github.peak_language_calls == 3
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_calls"),
+    [({}, 20), ({"github_token": "t"}, 30), ({"github_token": "t", "language_limit": 5}, 5), ({"language_limit": 25}, 25)],
+)
+def test_language_limit_follows_settings(overrides, expected_calls):
+    app, github = build(**overrides)
+    with TestClient(app) as client:
+        assert client.get("/users/gen1").status_code == 200
+    assert sum(github.calls[p] for p in github.calls if p.endswith("/languages")) == expected_calls
+
+
+def test_blank_settings_from_env_file_mean_unset(tmp_path, monkeypatch):
+    for name in ("GITHUB_TOKEN", "LANGUAGE_LIMIT", "RATE_LIMIT_PER_MINUTE"):
+        monkeypatch.delenv(name, raising=False)
+    env = tmp_path / ".env"
+    env.write_text("GITHUB_TOKEN=\nLANGUAGE_LIMIT=\nRATE_LIMIT_PER_MINUTE=10\n")
+    settings = Settings(_env_file=env)
+    assert settings.github_token is None
+    assert settings.language_limit is None
+    assert settings.effective_language_limit == 20
+    assert settings.rate_limit_per_minute == 10

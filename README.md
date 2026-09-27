@@ -188,6 +188,8 @@ Settings are read from the environment or from `.env` using `pydantic-settings`:
 | `GITHUB_TOKEN` | none | Raises GitHub's limit from 60 to 5,000 requests per hour |
 | `CACHE_TTL_SECONDS` | `3600` | How long a report stays cached in memory |
 | `RATE_LIMIT_PER_MINUTE` | `30` | Requests allowed per client IP per minute |
+| `MAX_CONCURRENT_GITHUB` | `5` | Most GitHub language requests in flight at once, shared by all users |
+| `LANGUAGE_LIMIT` | 20 without a token, unlimited with one | How many repos per user get language data |
 | `CORS_ORIGINS` | `["*"]` | Origins allowed to call the API from a browser (GET only) |
 | `TRUST_PROXY_HEADERS` | `false` | Take the client IP from `X-Forwarded-For`. Set it to `true` behind Render's proxy |
 
@@ -201,7 +203,7 @@ Settings are read from the environment or from `.env` using `pydantic-settings`:
 
 ### API design notes
 
-- **One shared HTTP client.** `fetch_report(username, client)` receives its client as a parameter. The API creates one client in `lifespan` and reuses it for every request.
+- **Shared client and shared semaphore.** `fetch_report(username, client, *, sem, language_limit)` receives everything it needs as parameters. The API creates one client and one `asyncio.Semaphore` in `lifespan`, so 20 users at once still make at most 5 parallel requests to GitHub, which avoids GitHub's secondary rate limits. The library does the fetching, and each caller sets the policy: the CLI uses 20 repos without a token, and the API reads `LANGUAGE_LIMIT`.
 - **In-memory TTL cache instead of the file cache.** Render wipes the disk on every deploy and restart, so a file cache would only look persistent. Cache keys ignore case, so `Torvalds` and `torvalds` share one entry. Failed fetches are never cached.
 - **Request coalescing.** If 10 requests for the same user arrive while the cache is empty, they all wait on one in-flight `asyncio.Task`, so GitHub is called only once. `asyncio.shield` stops one client disconnecting from cancelling the fetch for everyone else.
 - **Per-IP rate limiter.** A sliding-window limiter written as a dependency, about 20 lines. Without it, anyone could use up the server's `GITHUB_TOKEN` quota by calling the public URL in a loop. Behind a proxy, only the right-most `X-Forwarded-For` entry is trusted, because that one is added by the proxy and can't be spoofed by the client.

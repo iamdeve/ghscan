@@ -77,6 +77,23 @@ def test_second_run_uses_cache(fake_cli, capsys):
     assert len(requests) == first
 
 
+def test_cli_limits_languages_only_without_token(fake_cli, monkeypatch):
+    requests, _ = fake_cli
+    seen = []
+
+    async def spy(name, client, *, sem=None, language_limit=None):
+        seen.append(language_limit)
+        return await real_fetch(name, client, sem=sem, language_limit=language_limit)
+
+    real_fetch = cli.fetch_report
+    monkeypatch.setattr(cli, "fetch_report", spy)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    main(["user", "octo", "--no-cache"])
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    main(["user", "octo", "--no-cache"])
+    assert seen == [github_client.UNAUTHENTICATED_LANGUAGE_LIMIT, None]
+
+
 def test_compare_shares_one_client(fake_cli, capsys):
     requests, clients = fake_cli
     main(["compare", "octo", "mona"])

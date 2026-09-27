@@ -8,7 +8,7 @@ import httpx
 
 from . import cache
 from .errors import GhscanError
-from .github_client import fetch_report, get_token, make_client
+from .github_client import UNAUTHENTICATED_LANGUAGE_LIMIT, fetch_report, get_token, make_client
 from .models import USERNAME_MAX_LENGTH, USERNAME_PATTERN, Report
 from .report import render_compare, render_markdown, render_repos, render_user
 
@@ -33,7 +33,8 @@ async def load_report(name: str, client: httpx.AsyncClient, use_cache: bool = Tr
         if cached:
             return cached
     print(f"Fetching @{name} from GitHub...", file=sys.stderr)
-    report = await fetch_report(name, client)
+    language_limit = None if get_token() else UNAUTHENTICATED_LANGUAGE_LIMIT
+    report = await fetch_report(name, client, language_limit=language_limit)
     cache.save(report)
     return report
 

@@ -120,17 +120,16 @@ def fake_github(language_calls: list[str]):
     return handler
 
 
-def run_fetch_report(handler, token: str | None = None):
+def run_fetch_report(handler, **kwargs):
     async def go():
-        async with github_client.make_client(token, httpx.MockTransport(handler)) as client:
-            return await github_client.fetch_report("octo", client)
+        async with github_client.make_client(transport=httpx.MockTransport(handler)) as client:
+            return await github_client.fetch_report("octo", client, **kwargs)
     return asyncio.run(go())
 
 
-def test_fetch_report_skips_forks_and_limits_without_token(monkeypatch):
-    monkeypatch.setattr(github_client, "UNAUTHENTICATED_LANGUAGE_LIMIT", 2)
+def test_fetch_report_skips_forks_and_respects_language_limit():
     language_calls = []
-    report = run_fetch_report(fake_github(language_calls))
+    report = run_fetch_report(fake_github(language_calls), language_limit=2)
 
     assert sorted(language_calls) == ["big", "mid"]
     assert {r.name: r.languages for r in report.repos} == {
@@ -138,12 +137,35 @@ def test_fetch_report_skips_forks_and_limits_without_token(monkeypatch):
     }
 
 
-def test_fetch_report_fetches_all_languages_with_token(monkeypatch):
-    monkeypatch.setattr(github_client, "UNAUTHENTICATED_LANGUAGE_LIMIT", 2)
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+def test_fetch_report_without_limit_fetches_every_own_repo():
     language_calls = []
-    run_fetch_report(fake_github(language_calls), token="secret")
+    run_fetch_report(fake_github(language_calls))
     assert sorted(language_calls) == ["big", "mid", "small"]
+
+
+def test_fetch_report_uses_the_callers_semaphore():
+    active = peak = 0
+
+    async def handler(request):
+        nonlocal active, peak
+        if not request.url.path.endswith("/languages"):
+            return fake_github([])(request)
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return httpx.Response(200, json={"Go": 1})
+
+    async def go():
+        sem = asyncio.Semaphore(1)
+        async with github_client.make_client(transport=httpx.MockTransport(handler)) as client:
+            await asyncio.gather(
+                github_client.fetch_report("octo", client, sem=sem),
+                github_client.fetch_report("octo", client, sem=sem),
+            )
+
+    asyncio.run(go())
+    assert peak == 1
 
 
 def test_fetch_report_does_not_close_the_callers_client():

@@ -52,10 +52,6 @@ def make_client(
     )
 
 
-def is_authenticated(client: httpx.AsyncClient) -> bool:
-    return "authorization" in client.headers
-
-
 async def get_json(
     client: httpx.AsyncClient, path: str, params: dict | None = None
 ) -> dict | list | None:
@@ -121,15 +117,21 @@ async def get_languages(
     return data or {}
 
 
-async def fetch_report(username: str, client: httpx.AsyncClient) -> Report:
+async def fetch_report(
+    username: str,
+    client: httpx.AsyncClient,
+    *,
+    sem: asyncio.Semaphore | None = None,
+    language_limit: int | None = None,
+) -> Report:
+    sem = sem or asyncio.Semaphore(MAX_CONCURRENT)
     profile, repos = await asyncio.gather(
         get_profile(client, username),
         get_repos(client, username),
     )
 
-    sem = asyncio.Semaphore(MAX_CONCURRENT)
     own = sorted((r for r in repos if not r.is_fork), key=lambda r: r.stars, reverse=True)
-    targets = own if is_authenticated(client) else own[:UNAUTHENTICATED_LANGUAGE_LIMIT]
+    targets = own[:language_limit]
     results = await asyncio.gather(
         *(get_languages(client, profile.login, repo.name, sem) for repo in targets)
     )
