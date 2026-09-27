@@ -4,17 +4,19 @@ import re
 import sys
 from pathlib import Path
 
+import httpx
+
 from . import cache
 from .errors import GhscanError
-from .github_client import fetch_report
-from .models import Report
+from .github_client import UNAUTHENTICATED_LANGUAGE_LIMIT, fetch_report, get_token, make_client
+from .models import USERNAME_MAX_LENGTH, USERNAME_PATTERN, Report
 from .report import render_compare, render_markdown, render_repos, render_user
 
-USERNAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
+USERNAME_RE = re.compile(USERNAME_PATTERN)
 
 
 def username(value: str) -> str:
-    if not USERNAME_RE.match(value):
+    if len(value) > USERNAME_MAX_LENGTH or not USERNAME_RE.match(value):
         raise argparse.ArgumentTypeError(f"'{value}' is not a valid GitHub username")
     return value
 
@@ -25,38 +27,39 @@ def positive_int(value: str) -> int:
     return int(value)
 
 
-async def load_report(name: str, use_cache: bool = True) -> Report:
+async def load_report(name: str, client: httpx.AsyncClient, use_cache: bool = True) -> Report:
     if use_cache:
         cached = cache.load(name)
         if cached:
             return cached
     print(f"Fetching @{name} from GitHub...", file=sys.stderr)
-    report = await fetch_report(name)
+    language_limit = None if get_token() else UNAUTHENTICATED_LANGUAGE_LIMIT
+    report = await fetch_report(name, client, language_limit=language_limit)
     cache.save(report)
     return report
 
 
-async def cmd_user(args: argparse.Namespace) -> None:
-    report = await load_report(args.username, not args.no_cache)
+async def cmd_user(args: argparse.Namespace, client: httpx.AsyncClient) -> None:
+    report = await load_report(args.username, client, not args.no_cache)
     print(render_user(report))
 
 
-async def cmd_repos(args: argparse.Namespace) -> None:
-    report = await load_report(args.username, not args.no_cache)
+async def cmd_repos(args: argparse.Namespace, client: httpx.AsyncClient) -> None:
+    report = await load_report(args.username, client, not args.no_cache)
     print(render_repos(report, args.sort, args.limit))
 
 
-async def cmd_compare(args: argparse.Namespace) -> None:
+async def cmd_compare(args: argparse.Namespace, client: httpx.AsyncClient) -> None:
     use_cache = not args.no_cache
     first, second = await asyncio.gather(
-        load_report(args.first, use_cache),
-        load_report(args.second, use_cache),
+        load_report(args.first, client, use_cache),
+        load_report(args.second, client, use_cache),
     )
     print(render_compare(first, second))
 
 
-async def cmd_export(args: argparse.Namespace) -> None:
-    report = await load_report(args.username, not args.no_cache)
+async def cmd_export(args: argparse.Namespace, client: httpx.AsyncClient) -> None:
+    report = await load_report(args.username, client, not args.no_cache)
     if args.format == "md":
         content = render_markdown(report)
     else:
@@ -68,6 +71,11 @@ async def cmd_export(args: argparse.Namespace) -> None:
     except OSError as err:
         raise GhscanError(f"Could not write {path}: {err.strerror}") from None
     print(f"Saved {path}")
+
+
+async def run(args: argparse.Namespace) -> None:
+    async with make_client(get_token()) as client:
+        await args.handler(args, client)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -104,7 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     try:
-        asyncio.run(args.handler(args))
+        asyncio.run(run(args))
     except GhscanError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
