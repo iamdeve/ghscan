@@ -36,16 +36,23 @@ def get_token() -> str | None:
     return os.environ.get("GITHUB_TOKEN")
 
 
-def build_headers() -> dict[str, str]:
+def build_headers(token: str | None = None) -> dict[str, str]:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "ghscan"}
-    token = get_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
 
 
-def make_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(base_url=API_URL, headers=build_headers(), timeout=20.0)
+def make_client(
+    token: str | None = None, transport: httpx.AsyncBaseTransport | None = None
+) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        base_url=API_URL, headers=build_headers(token), timeout=20.0, transport=transport
+    )
+
+
+def is_authenticated(client: httpx.AsyncClient) -> bool:
+    return "authorization" in client.headers
 
 
 async def get_json(
@@ -113,20 +120,19 @@ async def get_languages(
     return data or {}
 
 
-async def fetch_report(username: str) -> Report:
-    async with make_client() as client:
-        profile, repos = await asyncio.gather(
-            get_profile(client, username),
-            get_repos(client, username),
-        )
+async def fetch_report(username: str, client: httpx.AsyncClient) -> Report:
+    profile, repos = await asyncio.gather(
+        get_profile(client, username),
+        get_repos(client, username),
+    )
 
-        sem = asyncio.Semaphore(MAX_CONCURRENT)
-        own = sorted((r for r in repos if not r.is_fork), key=lambda r: r.stars, reverse=True)
-        targets = own if get_token() else own[:UNAUTHENTICATED_LANGUAGE_LIMIT]
-        results = await asyncio.gather(
-            *(get_languages(client, profile.login, repo.name, sem) for repo in targets)
-        )
-        for repo, langs in zip(targets, results):
-            repo.languages = langs
+    sem = asyncio.Semaphore(MAX_CONCURRENT)
+    own = sorted((r for r in repos if not r.is_fork), key=lambda r: r.stars, reverse=True)
+    targets = own if is_authenticated(client) else own[:UNAUTHENTICATED_LANGUAGE_LIMIT]
+    results = await asyncio.gather(
+        *(get_languages(client, profile.login, repo.name, sem) for repo in targets)
+    )
+    for repo, langs in zip(targets, results):
+        repo.languages = langs
 
     return Report(profile=profile, repos=repos, fetched_at=time.time())

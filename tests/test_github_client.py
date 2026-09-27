@@ -105,11 +105,8 @@ def test_languages_error_returns_empty_but_rate_limit_propagates():
         run(lambda c: get_languages(c, "octo", "x", asyncio.Semaphore(1)), limited)
 
 
-def test_fetch_report_skips_forks_and_limits_without_token(monkeypatch):
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-    monkeypatch.setattr(github_client, "UNAUTHENTICATED_LANGUAGE_LIMIT", 2)
+def fake_github(language_calls: list[str]):
     repos = [repo_json("big", 100), repo_json("mid", 50), repo_json("small", 1), repo_json("fork", 999, fork=True)]
-    language_calls = []
 
     def handler(request):
         path = request.url.path
@@ -120,13 +117,48 @@ def test_fetch_report_skips_forks_and_limits_without_token(monkeypatch):
         language_calls.append(path.split("/")[3])
         return httpx.Response(200, json={"Python": 100})
 
-    monkeypatch.setattr(github_client, "make_client", lambda: client_for(handler))
-    report = asyncio.run(github_client.fetch_report("octo"))
+    return handler
+
+
+def run_fetch_report(handler, token: str | None = None):
+    async def go():
+        async with github_client.make_client(token, httpx.MockTransport(handler)) as client:
+            return await github_client.fetch_report("octo", client)
+    return asyncio.run(go())
+
+
+def test_fetch_report_skips_forks_and_limits_without_token(monkeypatch):
+    monkeypatch.setattr(github_client, "UNAUTHENTICATED_LANGUAGE_LIMIT", 2)
+    language_calls = []
+    report = run_fetch_report(fake_github(language_calls))
 
     assert sorted(language_calls) == ["big", "mid"]
     assert {r.name: r.languages for r in report.repos} == {
         "big": {"Python": 100}, "mid": {"Python": 100}, "small": {}, "fork": {},
     }
+
+
+def test_fetch_report_fetches_all_languages_with_token(monkeypatch):
+    monkeypatch.setattr(github_client, "UNAUTHENTICATED_LANGUAGE_LIMIT", 2)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    language_calls = []
+    run_fetch_report(fake_github(language_calls), token="secret")
+    assert sorted(language_calls) == ["big", "mid", "small"]
+
+
+def test_fetch_report_does_not_close_the_callers_client():
+    async def go():
+        async with github_client.make_client(transport=httpx.MockTransport(fake_github([]))) as client:
+            await github_client.fetch_report("octo", client)
+            assert not client.is_closed
+            await github_client.fetch_report("octo", client)
+    asyncio.run(go())
+
+
+def test_make_client_only_sends_token_it_was_given(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "from-env")
+    assert "authorization" not in github_client.make_client().headers
+    assert github_client.make_client("abc").headers["authorization"] == "Bearer abc"
 
 
 def test_malformed_github_data_is_clean_error():
