@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ghscan-api
+    runtime: python
+    plan: free
+    buildCommand: pip install ".[api]"
+    startCommand: uvicorn ghscan.api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+      - key: CACHE_TTL_SECONDS
+        value: "3600"
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "30"

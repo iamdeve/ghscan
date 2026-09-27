@@ -4,7 +4,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A small command-line tool for looking up any GitHub user. It shows their top repos, language breakdown, total stars and recent activity, and it can compare two users side by side or export a Markdown report.
+A command-line tool **and REST API** for looking up any GitHub user. It shows their top repos, language breakdown, total stars and recent activity, and it can compare two users side by side or export a Markdown report.
 
 Built with Python 3.10+, `asyncio` and `httpx`. Requests run in parallel, and results are cached for an hour, so a repeat lookup is instant.
 
@@ -139,6 +139,75 @@ $ ghscan user trail-
 ghscan user: error: argument username: 'trail-' is not a valid GitHub username
 ```
 
+## REST API
+
+The same analysis is also served over HTTP with FastAPI. The API reuses `github_client.py`, `report.py` and `models.py` unchanged.
+
+**Live docs:** https://<your-service>.onrender.com/docs
+
+> The API runs on Render's free tier, which puts it to sleep after about 15 minutes without traffic. The first request after that takes 30–60 seconds while it wakes up. Requests after that are fast.
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/health` | `{"status": "ok"}` |
+| `GET` | `/users/{username}` | Profile plus stats: stars, forks, most starred repo, languages as `{name, percent}`, last active |
+| `GET` | `/users/{username}/repos?sort=stars&limit=10&include_forks=false` | Repo list (`sort` accepts `stars`, `updated` or `name`, and `limit` is 1–100) |
+| `GET` | `/compare?a=torvalds&b=gvanrossum` | Both summaries, fetched in parallel |
+| `GET` | `/users/{username}/report.md` | The Markdown report as `text/markdown` |
+
+Every endpoint that fetches data accepts `?refresh=true` to skip the cache. Responses include an `X-Cache: HIT` or `X-Cache: MISS` header.
+
+```bash
+$ curl -s localhost:8000/users/torvalds | jq '{login, total_stars, most_starred: .most_starred.name, languages}'
+{
+  "login": "torvalds",
+  "total_stars": 262308,
+  "most_starred": "linux",
+  "languages": [
+    {"name": "C", "percent": 97.8},
+    {"name": "Assembly", "percent": 0.6},
+    ...
+  ]
+}
+```
+
+**Status codes:** `422` for an invalid username or query, `404` for an unknown user, `429` when either this API's rate limit or GitHub's is hit (with a `Retry-After` header), and `502` for any other GitHub failure.
+
+### Run the API locally
+
+```bash
+pip install -e ".[api]"
+cp .env.example .env              # optionally add GITHUB_TOKEN
+uvicorn ghscan.api.main:app --reload
+```
+
+Settings are read from the environment or from `.env` using `pydantic-settings`:
+
+| Variable | Default | |
+|---|---|---|
+| `GITHUB_TOKEN` | none | Raises GitHub's limit from 60 to 5,000 requests per hour |
+| `CACHE_TTL_SECONDS` | `3600` | How long a report stays cached in memory |
+| `RATE_LIMIT_PER_MINUTE` | `30` | Requests allowed per client IP per minute |
+| `CORS_ORIGINS` | `["*"]` | Origins allowed to call the API from a browser (GET only) |
+| `TRUST_PROXY_HEADERS` | `false` | Take the client IP from `X-Forwarded-For`. Set it to `true` behind Render's proxy |
+
+### Deploy on Render
+
+`render.yaml` describes the service. In Render, choose **New → Blueprint** and pick this repo, or create a **Web Service** by hand:
+
+- Build command: `pip install ".[api]"`
+- Start command: `uvicorn ghscan.api.main:app --host 0.0.0.0 --port $PORT`
+- Environment: add `GITHUB_TOKEN` in the dashboard (never in the code) and set `TRUST_PROXY_HEADERS=true`
+
+### API design notes
+
+- **One shared HTTP client.** `fetch_report(username, client)` receives its client as a parameter. The API creates one client in `lifespan` and reuses it for every request.
+- **In-memory TTL cache instead of the file cache.** Render wipes the disk on every deploy and restart, so a file cache would only look persistent. Cache keys ignore case, so `Torvalds` and `torvalds` share one entry. Failed fetches are never cached.
+- **Request coalescing.** If 10 requests for the same user arrive while the cache is empty, they all wait on one in-flight `asyncio.Task`, so GitHub is called only once. `asyncio.shield` stops one client disconnecting from cancelling the fetch for everyone else.
+- **Per-IP rate limiter.** A sliding-window limiter written as a dependency, about 20 lines. Without it, anyone could use up the server's `GITHUB_TOKEN` quota by calling the public URL in a loop. Behind a proxy, only the right-most `X-Forwarded-For` entry is trusted, because that one is added by the proxy and can't be spoofed by the client.
+- **No try/except in routes.** `UserNotFound`, `RateLimited` and `GitHubError` are turned into 404, 429 and 502 by exception handlers.
+- **One username rule.** The CLI and the API share `USERNAME_PATTERN`. It avoids lookahead because Pydantic's Rust regex engine doesn't support it.
+
 ## How it works
 
 - The profile and the repo list are fetched at the same time with `asyncio.gather`.
@@ -156,15 +225,21 @@ ghscan/
 ├── cli.py            argparse commands and error handling
 ├── github_client.py  async GitHub API calls, pagination, errors
 ├── cache.py          JSON cache in ~/.cache/ghscan, 1-hour expiry
-├── models.py         Profile, Repo and Report dataclasses
+├── models.py         Profile, Repo and Report Pydantic models
 ├── report.py         pure stats functions and text/markdown rendering
-└── errors.py         GhscanError base class
+├── errors.py         GhscanError base class
+└── api/
+    ├── main.py       app factory, lifespan, exception handlers, CORS
+    ├── routes.py     endpoints
+    ├── schemas.py    response models, separate from the internal models
+    ├── deps.py       settings, rate limiter, HTTP client and report loader
+    └── cache.py      in-memory TTL cache with request coalescing
 tests/                pytest suite, GitHub mocked with httpx.MockTransport
 ```
 
 ## Running tests
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[api,dev]"
 pytest
 ```
