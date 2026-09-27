@@ -26,9 +26,10 @@ class UserNotFound(GitHubError):
 
 class RateLimited(GitHubError):
     def __init__(self, reset_at: str | None = None) -> None:
+        self.reset_at = int(reset_at) if reset_at and reset_at.isdigit() else None
         message = "Rate limit hit. Set GITHUB_TOKEN or try later."
-        if reset_at and reset_at.isdigit():
-            message += f" Resets at {datetime.fromtimestamp(int(reset_at)):%H:%M}."
+        if self.reset_at:
+            message += f" Resets at {datetime.fromtimestamp(self.reset_at):%H:%M}."
         super().__init__(message)
 
 

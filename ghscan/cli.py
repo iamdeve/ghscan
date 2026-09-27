@@ -9,14 +9,14 @@ import httpx
 from . import cache
 from .errors import GhscanError
 from .github_client import fetch_report, get_token, make_client
-from .models import Report
+from .models import USERNAME_MAX_LENGTH, USERNAME_PATTERN, Report
 from .report import render_compare, render_markdown, render_repos, render_user
 
-USERNAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
+USERNAME_RE = re.compile(USERNAME_PATTERN)
 
 
 def username(value: str) -> str:
-    if not USERNAME_RE.match(value):
+    if len(value) > USERNAME_MAX_LENGTH or not USERNAME_RE.match(value):
         raise argparse.ArgumentTypeError(f"'{value}' is not a valid GitHub username")
     return value
 

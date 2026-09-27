@@ -63,9 +63,12 @@ def top_languages(breakdown: list[tuple[str, float]], top: int = 3) -> list[tupl
     return shown + [("Other", rest)] if rest > 0 else shown
 
 
+def last_active_date(report: Report) -> datetime | None:
+    return max((r.pushed_at for r in report.repos if r.pushed_at), default=report.profile.updated_at)
+
+
 def last_active(report: Report) -> str:
-    latest = max((r.pushed_at for r in report.repos if r.pushed_at), default=report.profile.updated_at)
-    return fmt_date(latest)
+    return fmt_date(last_active_date(report))
 
 
 def build_stats(report: Report) -> Stats:

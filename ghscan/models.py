@@ -2,6 +2,9 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+USERNAME_PATTERN = r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+USERNAME_MAX_LENGTH = 39
+
 
 class Profile(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
